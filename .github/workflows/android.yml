@@ -26,6 +26,283 @@ jobs:
     - name: Setup Gradle
       uses: gradle/actions/setup-gradle@v3
 
+    - name: Setup Complete Project Code Automatically
+      run: |
+        # 1. Create clean package.json
+        cat << 'EOF' > package.json
+        {
+          "name": "jp-stream",
+          "version": "1.0.0",
+          "private": true,
+          "type": "module",
+          "scripts": {
+            "dev": "vite",
+            "build": "vite build",
+            "preview": "vite preview"
+          },
+          "dependencies": {
+            "@capacitor/android": "^5.7.0",
+            "@capacitor/core": "^5.7.0",
+            "dashjs": "^4.7.4",
+            "hls.js": "^1.5.8",
+            "react": "^18.2.0",
+            "react-dom": "^18.2.0"
+          },
+          "devDependencies": {
+            "@capacitor/cli": "^5.7.0",
+            "@vitejs/plugin-react": "^4.2.1",
+            "vite": "^5.1.0"
+          }
+        }
+        EOF
+
+        # 2. Create clean vite.config.js
+        cat << 'EOF' > vite.config.js
+        import { defineConfig } from 'vite';
+        import react from '@vitejs/plugin-react';
+
+        export default defineConfig({
+          plugins: [react()],
+          build: {
+            outDir: 'dist'
+          }
+        });
+        EOF
+
+        # 3. Create clean index.html
+        cat << 'EOF' > index.html
+        <!DOCTYPE html>
+        <html lang="en">
+          <head>
+            <meta charset="UTF-8" />
+            <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+            <title>JP STREAM</title>
+          </head>
+          <body>
+            <div id="root"></div>
+            <script type="module" src="/src/main.jsx"></script>
+          </body>
+        </html>
+        EOF
+
+        # 4. Create capacitor.config.json
+        cat << 'EOF' > capacitor.config.json
+        {
+          "appId": "com.jpstream.app",
+          "appName": "JP STREAM",
+          "webDir": "dist",
+          "server": {
+            "androidScheme": "https",
+            "cleartext": true
+          }
+        }
+        EOF
+
+        # 5. Create src folder and main.jsx / App.jsx with Player logic
+        mkdir -p src
+        cat << 'EOF' > src/main.jsx
+        import React from 'react';
+        import ReactDOM from 'react-dom/client';
+        import App from './App.jsx';
+
+        ReactDOM.createRoot(document.getElementById('root')).render(
+          <React.StrictMode>
+            <App />
+          </React.StrictMode>
+        );
+        EOF
+
+        cat << 'EOF' > src/App.jsx
+        import React, { useState, useEffect, useRef } from 'react';
+        import Hls from 'hls.js';
+        import dashjs from 'dashjs';
+
+        export default function App() {
+          const [channels, setChannels] = useState([]);
+          const [selectedChannel, setSelectedChannel] = useState(null);
+          const [playlistUrlInput, setPlaylistUrlInput] = useState('');
+          const [directStreamUrl, setDirectStreamUrl] = useState('');
+          const [loading, setLoading] = useState(false);
+
+          const videoRef = useRef(null);
+          const hlsRef = useRef(null);
+          const dashPlayerRef = useRef(null);
+
+          useEffect(() => {
+            fetch('https://raw.githubusercontent.com/jplive24bc/jp-stream/main/channels.json')
+              .then(res => res.json())
+              .then(data => {
+                if (Array.isArray(data) && data.length > 0) {
+                  setChannels(data);
+                  setSelectedChannel(data[0]);
+                }
+              })
+              .catch(() => {
+                const fallback = [
+                  { name: "Test Stream (M3U8)", url: "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8" }
+                ];
+                setChannels(fallback);
+                setSelectedChannel(fallback[0]);
+              });
+          }, []);
+
+          useEffect(() => {
+            if (!selectedChannel || !selectedChannel.url || !videoRef.current) return;
+
+            const streamUrl = selectedChannel.url.trim();
+
+            if (hlsRef.current) {
+              hlsRef.current.destroy();
+              hlsRef.current = null;
+            }
+            if (dashPlayerRef.current) {
+              dashPlayerRef.current.reset();
+              dashPlayerRef.current = null;
+            }
+
+            if (streamUrl.includes('.mpd')) {
+              const player = dashjs.MediaPlayer().create();
+              player.initialize(videoRef.current, streamUrl, true);
+              dashPlayerRef.current = player;
+            } else if (Hls.isSupported() && (streamUrl.includes('.m3u8') || streamUrl.includes('.ts') || streamUrl.startsWith('http'))) {
+              const hls = new Hls({ enableWorker: true, lowLatencyMode: true });
+              hls.loadSource(streamUrl);
+              hls.attachMedia(videoRef.current);
+              hls.on(Hls.Events.MANIFEST_PARSED, () => {
+                videoRef.current.play().catch(() => {});
+              });
+              hlsRef.current = hls;
+            } else if (videoRef.current.canPlayType('application/vnd.apple.mpegurl')) {
+              videoRef.current.src = streamUrl;
+              videoRef.current.play().catch(() => {});
+            } else {
+              videoRef.current.src = streamUrl;
+              videoRef.current.play().catch(() => {});
+            }
+
+            return () => {
+              if (hlsRef.current) hlsRef.current.destroy();
+              if (dashPlayerRef.current) dashPlayerRef.current.reset();
+            };
+          }, [selectedChannel]);
+
+          const handleLoadPlaylistUrl = async () => {
+            if (!playlistUrlInput) return alert('একটি M3U/M3U8 প্লেলিস্ট URL দিন!');
+            setLoading(true);
+            try {
+              const response = await fetch(playlistUrlInput);
+              const text = await response.text();
+              const lines = text.split('\n');
+              const parsedChannels = [];
+              let currentName = 'Live Channel';
+
+              for (let i = 0; i < lines.length; i++) {
+                const line = lines[i].trim();
+                if (line.startsWith('#EXTINF:')) {
+                  const parts = line.split(',');
+                  if (parts.length > 1) currentName = parts[1].trim();
+                } else if (line.startsWith('http://') || line.startsWith('https://')) {
+                  parsedChannels.push({ name: currentName, url: line });
+                }
+              }
+
+              if (parsedChannels.length > 0) {
+                setChannels(parsedChannels);
+                setSelectedChannel(parsedChannels[0]);
+                alert(`${parsedChannels.length} টি চ্যানেল সফলভাবে লোড হয়েছে!`);
+              } else {
+                alert('প্লেলিস্টে কোনো লাইভ লিঙ্ক পাওয়া যায়নি!');
+              }
+            } catch (err) {
+              alert('প্লেলিস্ট লোড করতে ব্যর্থ হয়েছে! URL সঠিক কিনা নিশ্চিত করুন।');
+            }
+            setLoading(false);
+          };
+
+          const handlePlayDirectUrl = () => {
+            if (!directStreamUrl) return alert('একটি ভিডিও বা স্ট্রিম URL দিন!');
+            setSelectedChannel({ name: 'Direct Stream', url: directStreamUrl });
+          };
+
+          return (
+            <div style={{ backgroundColor: '#0b0e14', color: '#fff', minHeight: '100vh', padding: '12px', fontFamily: 'sans-serif' }}>
+              <header style={{ textAlign: 'center', marginBottom: '12px', paddingBottom: '8px', borderBottom: '2px solid #e50914' }}>
+                <h1 style={{ color: '#e50914', margin: 0, fontSize: '22px', fontWeight: 'bold' }}>JP STREAM PLAYER</h1>
+                <p style={{ margin: '4px 0 0 0', color: '#888', fontSize: '11px' }}>Supports HTTP, HTTPS, M3U, M3U8, MPD, TS Streams</p>
+              </header>
+
+              {selectedChannel ? (
+                <div style={{ marginBottom: '16px', background: '#161b22', borderRadius: '8px', padding: '10px', border: '1px solid #30363d' }}>
+                  <h3 style={{ margin: '0 0 8px 0', color: '#38edf8', fontSize: '15px' }}>🔴 Now Playing: {selectedChannel.name}</h3>
+                  <video
+                    ref={videoRef}
+                    controls
+                    autoPlay
+                    playsInline
+                    style={{ width: '100%', maxHeight: '250px', backgroundColor: '#000', borderRadius: '6px' }}
+                  />
+                </div>
+              ) : (
+                <div style={{ textAlign: 'center', padding: '15px', color: '#6e7681' }}>কোনো চ্যানেল নির্বাচিত হয়নি</div>
+              )}
+
+              <div style={{ background: '#161b22', padding: '12px', borderRadius: '8px', marginBottom: '16px', border: '1px solid #30363d' }}>
+                <h4 style={{ margin: '0 0 8px 0', color: '#e50914', fontSize: '14px' }}>🔗 Load Remote M3U Playlist</h4>
+                <div style={{ display: 'flex', gap: '8px', marginBottom: '12px' }}>
+                  <input
+                    type="text"
+                    placeholder="http://example.com/playlist.m3u8"
+                    value={playlistUrlInput}
+                    onChange={(e) => setPlaylistUrlInput(e.target.value)}
+                    style={{ flex: 1, padding: '8px', borderRadius: '4px', border: '1px solid #30363d', background: '#0d1117', color: '#fff', fontSize: '12px' }}
+                  />
+                  <button onClick={handleLoadPlaylistUrl} style={{ padding: '8px 12px', background: '#e50914', color: '#fff', border: 'none', borderRadius: '4px', fontWeight: 'bold', fontSize: '12px' }}>
+                    {loading ? 'Loading...' : 'Load M3U'}
+                  </button>
+                </div>
+
+                <h4 style={{ margin: '0 0 8px 0', color: '#e50914', fontSize: '14px' }}>▶️ Play Direct Stream URL</h4>
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  <input
+                    type="text"
+                    placeholder="http://.../.m3u8 or .mpd or .ts"
+                    value={directStreamUrl}
+                    onChange={(e) => setDirectStreamUrl(e.target.value)}
+                    style={{ flex: 1, padding: '8px', borderRadius: '4px', border: '1px solid #30363d', background: '#0d1117', color: '#fff', fontSize: '12px' }}
+                  />
+                  <button onClick={handlePlayDirectUrl} style={{ padding: '8px 12px', background: '#238636', color: '#fff', border: 'none', borderRadius: '4px', fontWeight: 'bold', fontSize: '12px' }}>
+                    Play URL
+                  </button>
+                </div>
+              </div>
+
+              <h3 style={{ borderLeft: '4px solid #e50914', paddingLeft: '8px', marginBottom: '10px', fontSize: '16px' }}>Channel List ({channels.length})</h3>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(120px, 1fr))', gap: '8px' }}>
+                {channels.map((ch, idx) => (
+                  <div
+                    key={idx}
+                    onClick={() => setSelectedChannel(ch)}
+                    style={{
+                      background: selectedChannel?.url === ch.url ? '#e50914' : '#21262d',
+                      padding: '10px',
+                      borderRadius: '6px',
+                      textAlign: 'center',
+                      cursor: 'pointer',
+                      fontSize: '12px',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap'
+                    }}
+                  >
+                    {ch.name}
+                  </div>
+                ))}
+              </div>
+            </div>
+          );
+        }
+        EOF
+
     - name: Install Dependencies
       run: npm install
 
@@ -42,6 +319,9 @@ jobs:
     - name: Build APK
       run: |
         cd android
+        if [ ! -f "gradlew" ]; then
+          gradle wrapper --gradle-version 8.2
+        fi
         chmod +x gradlew
         ./gradlew assembleDebug --stacktrace
 
