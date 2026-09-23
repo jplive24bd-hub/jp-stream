@@ -23,7 +23,10 @@ jobs:
         java-version: '17'
         distribution: 'temurin'
 
-    - name: Install Node Dependencies
+    - name: Setup Gradle Environment
+      uses: gradle/actions/setup-gradle@v3
+
+    - name: Install Dependencies
       run: npm install
 
     - name: Build Frontend
@@ -35,7 +38,7 @@ jobs:
     - name: Build APK
       run: |
         cd android
-        gradle assembleDebug
+        gradle assembleDebug --stacktrace
 
     - name: Upload APK Artifact
       uses: actions/upload-artifact@v4
