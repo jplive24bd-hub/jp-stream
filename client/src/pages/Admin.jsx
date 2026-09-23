@@ -113,7 +113,6 @@ export default function Admin() {
         <button onClick={() => setIsAuthenticated(false)} style={{ background: '#333', color: '#fff', padding: '5px 10px', border: 'none', cursor: 'pointer' }}>Logout</button>
       </div>
 
-      {/* Change Password Section */}
       <div style={{ background: '#222', padding: '15px', borderRadius: '8px', margin: '20px 0' }}>
         <h4>🔑 Change Password</h4>
         <input 
@@ -154,4 +153,3 @@ export default function Admin() {
     </div>
   );
       }
-      
