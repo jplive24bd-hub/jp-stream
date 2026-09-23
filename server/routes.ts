@@ -106,4 +106,4 @@ export function registerRoutes(app: Express) {
     await db.delete(channels).where(eq(channels.id, Number(id)));
     res.json({ success: true });
   });
-        }
+}
