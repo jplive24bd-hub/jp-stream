@@ -11,6 +11,8 @@
   "dependencies": {
     "@capacitor/android": "^5.7.0",
     "@capacitor/core": "^5.7.0",
+    "dashjs": "^4.7.4",
+    "hls.js": "^1.5.8",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "wouter": "^3.0.0"
